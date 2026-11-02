@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Локальный сервис скачивания FABDEM V1-2: плитки 1°, произвольные области и полигоны.">
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <title>{{ app_name }} — FABDEM 30 м</title>
+  <link rel="stylesheet" href="/static/vendor/leaflet.css">
+  <link rel="stylesheet" href="/static/vendor/leaflet-geoman.css">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body data-max-tiles="{{ max_tiles }}" data-max-upload-mb="{{ max_upload_mb }}">
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">F</span>
+      <div>
+        <div class="brand-title">FABDEM</div>
+        <div class="brand-subtitle">рельеф 30 м без зданий и леса</div>
+      </div>
+    </div>
+    <nav class="topnav">
+      <a href="{{ dataset_url }}" target="_blank" rel="noreferrer">Датасет</a>
+      <a href="{{ license_url }}" target="_blank" rel="noreferrer">{{ license_name }}</a>
+      <span class="version">v{{ app_version }}</span>
+    </nav>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <section class="intro">
+        <h1>Скачать FABDEM</h1>
+        <p>
+          Выберите плитку 1° на карте, нарисуйте прямоугольник или полигон,
+          либо загрузите KML/GeoJSON. Результат — GeoTIFF в EPSG:4326.
+        </p>
+        <p class="fineprint">
+          Неофициальный локальный сервис. Данные FABDEM V1-2 распространяются
+          по лицензии {{ license_name }}.
+        </p>
+      </section>
+
+      <section class="tool-tabs" aria-label="Способ выбора области">
+        <button class="tool-tab is-active" type="button" data-tool="tile">
+          <strong>1° плитка</strong>
+          <span>клик по сетке</span>
+        </button>
+        <button class="tool-tab" type="button" data-tool="rect">
+          <strong>Прямоугольник</strong>
+          <span>рамка на карте</span>
+        </button>
+        <button class="tool-tab" type="button" data-tool="polygon">
+          <strong>Полигон</strong>
+          <span>рисование</span>
+        </button>
+        <button class="tool-tab" type="button" data-tool="viewport">
+          <strong>Видимая область</strong>
+          <span>текущий экран</span>
+        </button>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <h2>Границы</h2>
+          <button class="link-button" type="button" id="clear-selection">Очистить</button>
+        </div>
+        <p class="muted" id="selection-summary">Область не выбрана</p>
+        <div class="bbox-grid">
+          <label>Запад
+            <input id="west" type="number" step="any" inputmode="decimal" placeholder="37.0">
+          </label>
+          <label>Восток
+            <input id="east" type="number" step="any" inputmode="decimal" placeholder="38.0">
+          </label>
+          <label>Юг
+            <input id="south" type="number" step="any" inputmode="decimal" placeholder="55.0">
+          </label>
+          <label>Север
+            <input id="north" type="number" step="any" inputmode="decimal" placeholder="56.0">
+          </label>
+        </div>
+        <button class="button button-secondary button-wide" type="button" id="apply-bbox">
+          Применить координаты
+        </button>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <h2>Или файл</h2>
+        </div>
+        <label class="dropzone" id="dropzone" for="file-input">
+          <input id="file-input" type="file" accept=".kml,.kmz,.geojson,.json" hidden>
+          <span class="dropzone-title">KML, KMZ или GeoJSON</span>
+          <span class="dropzone-hint">нажмите или перетащите файл, до {{ max_upload_mb }} МБ</span>
+        </label>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <h2>Параметры</h2>
+        </div>
+        <label class="check-row">
+          <input id="mask-toggle" type="checkbox" checked>
+          <span>Маскировать всё вне полигона</span>
+        </label>
+        <label class="field-row">
+          <span>Система координат</span>
+          <select id="crs-select">
+            <option value="EPSG:4326">WGS 84 / EPSG:4326</option>
+            <option value="EPSG:3857">Web Mercator / EPSG:3857</option>
+            <option value="utm">UTM (авто)</option>
+          </select>
+        </label>
+        <label class="field-row">
+          <span>Имя файла</span>
+          <input id="filename" type="text" maxlength="120" placeholder="fabdem">
+        </label>
+      </section>
+
+      <section class="estimate-card" id="estimate-card" aria-live="polite">
+        <div class="estimate-row">
+          <span>Площадь</span>
+          <strong id="area-value">—</strong>
+        </div>
+        <div class="estimate-row">
+          <span>Плиток 1°</span>
+          <strong id="tiles-value">—</strong>
+        </div>
+        <div class="estimate-row">
+          <span>Оценка размера</span>
+          <strong id="size-value">—</strong>
+        </div>
+        <div class="estimate-row">
+          <span>Лимит</span>
+          <strong id="limit-value">{{ max_tiles }} плиток</strong>
+        </div>
+        <div class="warning" id="estimate-warning" hidden></div>
+        <div class="archives" id="archives"></div>
+      </section>
+
+      <button class="button button-primary button-wide download-button" type="button" id="download-button" disabled>
+        Скачать GeoTIFF
+      </button>
+
+      <div class="progress-card" id="progress-card" hidden>
+        <div class="progress-head">
+          <span id="progress-message">Подготовка…</span>
+          <span id="progress-percent">0%</span>
+        </div>
+        <div class="progress-track"><div class="progress-bar" id="progress-bar"></div></div>
+        <div class="progress-actions" id="progress-actions"></div>
+      </div>
+
+      <section class="tile-card" id="tile-card" hidden>
+        <div class="panel-heading">
+          <h2>Выбранная плитка</h2>
+        </div>
+        <div class="tile-name" id="tile-name"></div>
+        <div class="muted" id="tile-bounds"></div>
+        <div class="muted small" id="tile-file"></div>
+      </section>
+
+      <section class="license">
+        <h2>Лицензия и цитирование</h2>
+        <p>
+          FABDEM V1-2: Hawker et al. (2022).
+          Лицензия <a href="{{ license_url }}" target="_blank" rel="noreferrer">{{ license_name }}</a>.
+          Коммерческое использование запрещено без отдельного разрешения.
+        </p>
+        <p class="fineprint">
+          FABDEM is produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014
+          and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS
+          by the European Union and ESA; all rights reserved.
+        </p>
+        <p class="fineprint">
+          DOI: <a href="https://doi.org/{{ doi }}" target="_blank" rel="noreferrer">{{ doi }}</a>
+        </p>
+      </section>
+
+      <footer class="sidebar-footer">
+        <span>{{ app_name }} · v{{ app_version }}</span>
+        <span>Локальный запуск</span>
+      </footer>
+    </aside>
+
+    <section class="map-wrap">
+      <div id="map" role="application" aria-label="Карта выбора области FABDEM"></div>
+      <div class="map-toolbar">
+        <button type="button" class="map-tool" data-tool="rect">Прямоугольник</button>
+        <button type="button" class="map-tool" data-tool="polygon">Полигон</button>
+        <button type="button" class="map-tool" data-tool="viewport">Видимая область</button>
+        <button type="button" class="map-tool" data-tool="edit">Редактировать</button>
+        <button type="button" class="map-tool map-tool-quiet" id="toolbar-clear">Очистить</button>
+      </div>
+      <div class="map-hint" id="map-hint">
+        Сетка плиток 1° появляется при увеличении. Клик по квадрату выбирает плитку.
+      </div>
+      <div class="toast" id="toast" hidden></div>
+    </section>
+  </main>
+
+  <script src="/static/vendor/leaflet.js"></script>
+  <script src="/static/vendor/leaflet-geoman.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
